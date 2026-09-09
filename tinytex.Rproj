@@ -1,4 +1,5 @@
 Version: 1.0
+ProjectId: e10a7696-0e51-49a0-8351-9df9da88574c
 
 RestoreWorkspace: Default
 SaveWorkspace: Default
@@ -16,4 +17,5 @@ AutoAppendNewline: Yes
 StripTrailingWhitespace: Yes
 
 BuildType: Package
-PackageInstallArgs: -v && Rscript -e "Rd2roxygen::rab(install=T,build=F)"
+PackageUseDevtools: Yes
+PackageRoxygenize: rd,collate,namespace

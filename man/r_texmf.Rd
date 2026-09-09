@@ -4,10 +4,12 @@
 \alias{r_texmf}
 \title{Add/remove R's texmf tree to/from TeX Live}
 \usage{
-r_texmf(action = c("add", "remove"))
+r_texmf(action = c("add", "remove"), ...)
 }
 \arguments{
 \item{action}{Add/remove R's texmf tree to/from TeX Live.}
+
+\item{...}{Arguments passed to \code{\link[=tlmgr]{tlmgr()}}.}
 }
 \description{
 R ships a custom texmf tree containing a few LaTeX style and class files,
@@ -15,18 +17,21 @@ which are required when compiling R packages manuals (\file{Rd.sty}) or
 Sweave documents (\file{Sweave.sty}). This tree can be found under the
 directory \code{file.path(R.home('share'), 'texmf')}. This function can be
 used to add/remove R's texmf tree to/from TeX Live via
-\code{\link{tlmgr_conf}('auxtrees')}.
+\verb{[tlmgr_conf]('auxtrees')}.
 }
 \examples{
-r_texmf("remove")
-r_texmf("add")
+# running the code below will modify your texmf tree; please do not run
+# unless you know what it means
+
+# r_texmf('remove')
+# r_texmf('add')
 
 # all files under R's texmf tree
-list.files(file.path(R.home("share"), "texmf"), recursive = TRUE, full.names = TRUE)
+list.files(file.path(R.home('share'), 'texmf'), recursive = TRUE, full.names = TRUE)
 }
 \references{
 See the \pkg{tlmgr} manual for detailed information about
-  \command{tlmgr conf auxtrees}. Check out
-  \url{https://tex.stackexchange.com/q/77720/9128} if you don't know what
-  \code{texmf} means.
+\command{tlmgr conf auxtrees}. Check out
+\url{https://tex.stackexchange.com/q/77720/9128} if you don't know what
+\code{texmf} means.
 }

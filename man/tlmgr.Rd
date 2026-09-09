@@ -5,25 +5,43 @@
 \alias{tlmgr_search}
 \alias{tlmgr_install}
 \alias{tlmgr_remove}
+\alias{tlmgr_version}
 \alias{tlmgr_update}
 \alias{tlmgr_path}
 \alias{tlmgr_conf}
+\alias{tlmgr_repo}
 \title{Run the TeX Live Manager}
 \usage{
 tlmgr(args = character(), usermode = FALSE, ..., .quiet = FALSE)
 
 tlmgr_search(what, file = TRUE, all = FALSE, global = TRUE, word = FALSE, ...)
 
-tlmgr_install(pkgs = character(), usermode = FALSE, path = !usermode && os != "windows")
+tlmgr_install(
+  pkgs = character(),
+  usermode = FALSE,
+  path = !usermode && os != "windows",
+  ...
+)
 
 tlmgr_remove(pkgs = character(), usermode = FALSE)
 
-tlmgr_update(all = TRUE, self = TRUE, more_args = character(), usermode = FALSE, 
-    run_fmtutil = TRUE)
+tlmgr_version(format = c("raw", "string", "list"))
+
+tlmgr_update(
+  all = TRUE,
+  self = TRUE,
+  more_args = character(),
+  usermode = FALSE,
+  run_fmtutil = TRUE,
+  delete_tlpdb = getOption("tinytex.delete_tlpdb", FALSE),
+  ...
+)
 
 tlmgr_path(action = c("add", "remove"))
 
-tlmgr_conf(more_args = character())
+tlmgr_conf(more_args = character(), ...)
+
+tlmgr_repo(url = NULL, ...)
 }
 \arguments{
 \item{args}{A character vector of arguments to be passed to the command
@@ -38,8 +56,9 @@ which you do not have write permission. This option should not be needed on
 personal computers, and has some limitations, so please read the
 \pkg{tlmgr} manual very carefully before using it.}
 
-\item{...}{Additional arguments passed to \code{\link{system2}()} (e.g.,
-\code{stdout = TRUE} to capture stdout).}
+\item{...}{For \code{tlmgr()}, additional arguments to be passed to
+\code{\link[=system2]{system2()}} (e.g., \code{stdout = TRUE} to capture stdout). For
+other functions, arguments to be passed to \code{tlmgr()}.}
 
 \item{.quiet}{Whether to hide the actual command before executing it.}
 
@@ -64,6 +83,11 @@ this after a binary package is installed, such as the \pkg{metafont}
 package, which contains the executable \command{mf}, but it does not hurt
 even if no binary packages were installed).}
 
+\item{format}{The data format to be returned: \code{raw} means the raw output
+of the command \command{tlmgr --version}, \code{string} means a character
+string of the format \samp{TeX Live YEAR (TinyTeX) with tlmgr DATE}, and
+\code{list} means a list of the form \code{list(texlive = YEAR, tlmgr = DATE, tinytex = TRUE/FALSE)}.}
+
 \item{self}{Whether to update the TeX Live Manager itself.}
 
 \item{more_args}{A character vector of more arguments to be passed to the
@@ -72,9 +96,19 @@ command \command{tlmgr update} or \command{tlmgr conf}.}
 \item{run_fmtutil}{Whether to run \command{fmtutil-sys --all} to (re)create
 format and hyphenation files after updating \pkg{tlmgr}.}
 
-\item{action}{On Unix, add/remove symlinks of binaries to/from the system's
-\code{PATH}. On Windows, add/remove the path to the TeXLive binary
+\item{delete_tlpdb}{Whether to delete the \file{texlive.tlpdb.HASH} files
+(where \verb{HASH} is an MD5 hash) under the \file{tlpkg} directory of the
+root directory of TeX Live after updating.}
+
+\item{action}{On macOS, if \file{/usr/local/bin} is not writable, add/remove
+the TinyTeX bin path to/from \file{/etc/paths.d/TinyTeX}; otherwise (or on
+other Unix systems), add/remove symlinks of binaries to/from the system's
+\code{PATH}. On Windows, add/remove the path to the TeX Live binary
 directory to/from the system environment variable \code{PATH}.}
+
+\item{url}{The URL of the CTAN mirror. If \code{NULL}, show the current
+repository, otherwise set the repository. See the \code{repository}
+argument of \code{\link[=install_tinytex]{install_tinytex()}} for examples.}
 }
 \description{
 Execute the \command{tlmgr} command to search for LaTeX packages, install
@@ -82,23 +116,29 @@ packages, update packages, and so on.
 }
 \details{
 The \code{tlmgr()} function is a wrapper of \code{system2('tlmgr')}. All
-other \code{tlmgr_*()} functions are based on \code{tlmgr} for specific
-tasks. Please consult the \pkg{tlmgr} manual for full details.
+other \verb{tlmgr_*()} functions are based on \code{tlmgr} for specific
+tasks. For example, \code{tlmgr_install()} runs the command \command{tlmgr
+install} to install LaTeX packages, and \code{tlmgr_update} runs the command
+\command{tlmgr update}, etc. Note that \code{tlmgr_repo} runs \command{tlmgr
+options repository} to query or set the CTAN repository. Please consult the
+\pkg{tlmgr} manual for full details.
 }
 \examples{
+\dontshow{if (interactive()) withAutoprint(\{ # examplesIf}
 # search for a package that contains titling.sty
-tlmgr_search("titling.sty")
+tlmgr_search('titling.sty')
 
-#' to match titling.sty exactly, add a slash before the keyword, e.g.
-#' tlmgr_search('/titling.sty')
+# to match titling.sty exactly, add a slash before the keyword, e.g.
+tlmgr_search('/titling.sty')
 
-#' use a regular expression if you want to be more precise, e.g.
-#' tlmgr_search('/titling\\\\.sty$')
+# use a regular expression if you want to be more precise, e.g.
+tlmgr_search('/titling\\\\.sty$')
 
 # list all installed LaTeX packages
-tlmgr(c("info", "--list", "--only-installed", "--data", "name"))
+tlmgr(c('info', '--list', '--only-installed', '--data', 'name'))
+\dontshow{\}) # examplesIf}
 }
 \references{
 The \pkg{tlmgr} manual:
-  \url{https://www.tug.org/texlive/doc/tlmgr.html}
+\url{https://www.tug.org/texlive/doc/tlmgr.html}
 }

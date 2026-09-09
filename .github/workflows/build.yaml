@@ -1,0 +1,448 @@
+on:
+  workflow_dispatch:
+    inputs:
+      ctan_repo:
+        description: 'CTAN repository URL. See https://ctan.org/mirrors/mirmon for available mirrors.'
+        required: false
+        type: string
+        default: 'https://tlnet.yihui.org'
+      force_rebuild_tinytex2:
+        description: 'Force a full rebuild of TinyTeX-2 (ignore existing daily bundle)'
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    - cron: '5 3 * * *'
+
+name: Build TinyTeX Bundles
+
+env:
+  # for gh usage with external repo
+  GH_TOKEN: ${{ secrets.CUSTOM_GITHUB_TOKEN }}
+  # required for GH to run on another repo (-R option)
+  # https://cli.github.com/manual/gh_help_environment
+  GH_REPO: rstudio/tinytex-releases
+  # CTAN repository URL for TeX Live packages
+  CTAN_REPO: ${{ inputs.ctan_repo || 'https://tlnet.yihui.org' }}
+  # Force full rebuild of TinyTeX-2 even if the daily bundle year matches
+  FORCE_REBUILD: ${{ inputs.force_rebuild_tinytex2 == true && 'true' || 'false' }}
+  USE_BUNDLED_LIBUV: 1
+
+jobs:
+  validate-ctan:
+    runs-on: ubuntu-latest
+    name: Validate CTAN repository
+    outputs:
+      texlive-year: ${{ steps.check-repo.outputs.texlive-year }}
+    steps:
+      - name: Check CTAN repository accessibility
+        id: check-repo
+        run: |
+          echo "Validating CTAN repository: $CTAN_REPO"
+
+          # Check if the repository is accessible by fetching the texlive.tlpdb file
+          if ! curl --fail --silent --show-error --head "$CTAN_REPO/tlpkg/texlive.tlpdb" > /dev/null; then
+            echo "✗ CTAN repository is not accessible or invalid"
+            echo "Please check the URL: $CTAN_REPO"
+            exit 1
+          fi
+
+          echo "✓ CTAN repository is valid and accessible"
+
+          # Detect TeX Live version by checking for TEXLIVE_YYYY files
+          echo "Detecting TeX Live version..."
+          CURRENT_YEAR=$(date +%Y)
+          TEXLIVE_YEAR=""
+
+          # Check current year first, then previous year
+          for year in $CURRENT_YEAR $((CURRENT_YEAR - 1)); do
+            if curl --fail --silent --show-error --head "$CTAN_REPO/TEXLIVE_$year" > /dev/null 2>&1; then
+              TEXLIVE_YEAR=$year
+              break
+            fi
+          done
+
+          if [ -n "$TEXLIVE_YEAR" ]; then
+            echo "✓ TeX Live version: $TEXLIVE_YEAR"
+            echo "texlive-year=$TEXLIVE_YEAR" >> $GITHUB_OUTPUT
+          else
+            echo "⚠ Could not detect version with current/previous year, checking older versions..."
+            # Check for older TEXLIVE_YYYY files (going back 5 years)
+            for offset in {2..5}; do
+              year=$((CURRENT_YEAR - offset))
+              if curl --fail --silent --show-error --head "$CTAN_REPO/TEXLIVE_$year" > /dev/null 2>&1; then
+                TEXLIVE_YEAR=$year
+                break
+              fi
+            done
+
+            if [ -n "$TEXLIVE_YEAR" ]; then
+              echo "✓ TeX Live version: $TEXLIVE_YEAR"
+              echo "texlive-year=$TEXLIVE_YEAR" >> $GITHUB_OUTPUT
+            else
+              echo "⚠ Warning: Could not detect TeX Live version (no TEXLIVE_YYYY file found)"
+              echo "texlive-year=unknown" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+  new-release:
+    needs: [validate-ctan]
+    runs-on: ubuntu-latest
+    name: Create new daily draft release
+    outputs:
+      tag: ${{ steps.draft.outputs.tag }}
+      draft-tag: ${{ steps.draft.outputs.draft-tag }}
+
+    steps:
+      - name: Create new draft release
+        id: draft
+        run: |
+          tag=daily
+          url=$(gh release create ${tag} --draft --prerelease --title "TinyTeX daily build" --notes "(WIP) Next daily release")
+          echo "draft-tag=$(echo $url | grep -o tag/[^/]*$ | cut -c 5-)" >> $GITHUB_OUTPUT
+          echo "tag=${tag}" >> $GITHUB_OUTPUT
+
+  build-windows:
+    needs: [validate-ctan, new-release]
+    runs-on: windows-latest
+    name: Build Bundles For Windows
+
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Clone repo
+        uses: actions/checkout@HEAD
+
+      - name: Setup R for build
+        uses: ./.github/actions/setup-r-for-build
+
+      - name: Add TinyTeX to PATH
+        run: |
+          echo "$APPDATA\TinyTeX\bin\windows" >> $GITHUB_PATH
+        shell: bash
+
+      - name: Build TinyTeX-0
+        run: |
+          Rscript "tools/install-windows-base.R" # the infraonly scheme
+          7z a -sfx TinyTeX-0-windows.exe $Env:APPDATA\\TinyTeX
+
+      - name: Build TinyTeX-1
+        run: |
+          Rscript "tools/install-windows-more.R"  # extra packages for compiling R Markdown
+          7z a -sfx TinyTeX-1-windows.exe $Env:APPDATA\\TinyTeX
+
+      - name: Build TinyTeX
+        run: |
+          Rscript "tools/test-basic.R"  # even more LaTeX packages
+          7z a -sfx TinyTeX-windows.exe $Env:APPDATA\\TinyTeX
+          7z a TinyTeX.zip $Env:APPDATA\\TinyTeX
+
+      - name: Build TinyTeX-2
+        id: build-tinytex-2
+        env:
+          TEXLIVE_YEAR: ${{ needs.validate-ctan.outputs.texlive-year }}
+        run: "& tools/build-tinytex-2.ps1"
+        shell: pwsh
+
+      - name: Package TinyTeX-2
+        if: steps.build-tinytex-2.outputs.tinytex2-changed != 'false'
+        run: 7z a -sfx TinyTeX-2-windows.exe $Env:APPDATA\\TinyTeX
+
+      - name: Test Installation script
+        env:
+          TINYTEX_INSTALLER: TinyTeX-0
+        run: tools/install-bin-windows.ps1
+        shell: pwsh
+
+      - name: Upload bundles
+        uses: ./.github/actions/upload-bundles
+        with:
+          draft-tag: ${{ needs.new-release.outputs.draft-tag }}
+
+  build-linux:
+    needs: [validate-ctan, new-release]
+    name: Build Bundles For Linux
+    runs-on: ubuntu-latest
+    outputs:
+      tlmgr-version: ${{ steps.tlmgr-version.outputs.TLMGR_VERSION }}
+
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Clone repo
+        uses: actions/checkout@HEAD
+
+      - name: Setup R for build
+        uses: ./.github/actions/setup-r-for-build
+
+      - name: Build texlive-local-deb
+        run: |
+          sudo apt install -y equivs
+          wget https://cdn.jsdelivr.net/gh/scottkosty/install-tl-ubuntu/debian-control-texlive-in.txt
+          equivs-build debian-*
+          mv texlive-local*.deb texlive-local.deb
+
+      - name: Build TinyTeX-0
+        run: |
+          sed -i 's|# finished base|cp $OLDPWD/install-tl-unx.tar.gz tools/; Rscript tools/clean-tlpdb.R; tar Jcf TinyTeX-0-linux-x86_64.tar.xz -C ~ .TinyTeX|' tools/install-unx.sh
+          ./tools/install-unx.sh
+          # tlmgr path add will add in this folder which is not on PATH by default
+          # (can be checked with tlmgr options sys_bin)
+          echo "$HOME/bin" >> $GITHUB_PATH
+          ls -lisah "$HOME/bin"
+
+      - name: Build TinyTeX-1
+        run: |
+          Rscript "tools/clean-tlpdb.R"
+          tar Jcf TinyTeX-1-linux-x86_64.tar.xz -C ~ .TinyTeX
+          tar zcf TinyTeX-1-tar.gz -C ~ .TinyTeX
+
+      - name: Build TinyTeX
+        run: |
+          Rscript "tools/test-basic.R"
+          tar Jcf TinyTeX-linux-x86_64.tar.xz -C ~ .TinyTeX
+          tar zcf TinyTeX.tar.gz -C ~ .TinyTeX
+
+      - name: Build TinyTeX-2
+        id: build-tinytex-2
+        env:
+          TEXLIVE_YEAR: ${{ needs.validate-ctan.outputs.texlive-year }}
+        run: sh tools/build-tinytex-2.sh
+
+      - name: Package TinyTeX-2
+        if: steps.build-tinytex-2.outputs.tinytex2-changed != 'false'
+        run: tar Jcf TinyTeX-2-linux-x86_64.tar.xz -C ~ .TinyTeX
+
+      - name: Export Regex file
+        run: |
+          Rscript "tools/export-regex.R"
+          tar zcf regex.tar.gz regex.json
+
+      - name: Build *nix installer bundle
+        working-directory: tools
+        run: |
+          cp install-base.sh install.sh
+          echo "tlmgr install $(cat pkgs-custom.txt | tr '\n' ' ')" >> install.sh
+          tar zcf ../installer-unix.tar.gz install-tl-unx.tar.gz tinytex.profile install.sh
+
+      - name: Get Version information for daily build
+        id: tlmgr-version
+        run: |
+          echo "TLMGR_VERSION<<EOFTLMGR" >> $GITHUB_OUTPUT
+          ~/bin/tlmgr version | sed -n '1p;3p' >> $GITHUB_OUTPUT
+          echo "EOFTLMGR" >> $GITHUB_OUTPUT
+
+      - run: ls -lisah
+
+      - name: Upload bundles
+        uses: ./.github/actions/upload-bundles
+        with:
+          draft-tag: ${{ needs.new-release.outputs.draft-tag }}
+
+  build-linux-arm64:
+    needs: [validate-ctan, new-release]
+    name: Build Bundles For Linux ARM64
+    runs-on: ubuntu-24.04-arm
+
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Clone repo
+        uses: actions/checkout@HEAD
+
+      - name: Setup R for build
+        uses: ./.github/actions/setup-r-for-build
+
+      - name: Build TinyTeX-0
+        run: |
+          sed -i 's|# finished base|cp $OLDPWD/install-tl-unx.tar.gz tools/; Rscript tools/clean-tlpdb.R; tar Jcf TinyTeX-0-linux-arm64.tar.xz -C ~ .TinyTeX|' tools/install-unx.sh
+          ./tools/install-unx.sh
+          echo "$HOME/bin" >> $GITHUB_PATH
+          ls -lisah "$HOME/bin"
+
+      - name: Build TinyTeX-1
+        run: |
+          Rscript "tools/clean-tlpdb.R"
+          tar Jcf TinyTeX-1-linux-arm64.tar.xz -C ~ .TinyTeX
+
+      - name: Build TinyTeX
+        run: |
+          Rscript "tools/test-basic.R"
+          tar Jcf TinyTeX-linux-arm64.tar.xz -C ~ .TinyTeX
+
+      - name: Build TinyTeX-2
+        id: build-tinytex-2
+        env:
+          TEXLIVE_YEAR: ${{ needs.validate-ctan.outputs.texlive-year }}
+        run: sh tools/build-tinytex-2.sh
+
+      - name: Package TinyTeX-2
+        if: steps.build-tinytex-2.outputs.tinytex2-changed != 'false'
+        run: tar Jcf TinyTeX-2-linux-arm64.tar.xz -C ~ .TinyTeX
+
+      - run: ls -lisah
+
+      - name: Upload bundles
+        uses: ./.github/actions/upload-bundles
+        with:
+          draft-tag: ${{ needs.new-release.outputs.draft-tag }}
+
+  build-linux-musl:
+    needs: [validate-ctan, new-release]
+    name: Build Bundles For Linux (musl/Alpine)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    container:
+      image: alpine:latest
+      options: --user root
+
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Install build dependencies
+        run: apk add --no-cache bash R R-dev perl wget xz tar curl git github-cli g++ pandoc cmake linux-headers
+
+      - name: Clean up any existing TinyTeX bundles
+        run: rm -f TinyTeX-*.* TinyTeX.*
+
+      - name: Clone repo
+        uses: actions/checkout@HEAD
+
+      - name: Install R packages
+        uses: yihui/actions/setup-r-dependencies@HEAD
+        with:
+          extra-packages: rmarkdown kableExtra bookdown .
+
+      - name: Build TinyTeX-0
+        run: |
+          sed -i 's|# finished base|cp $OLDPWD/install-tl-unx.tar.gz tools/; Rscript tools/clean-tlpdb.R; tar Jcf TinyTeX-0-linuxmusl-x86_64.tar.xz -C ~ .TinyTeX|' tools/install-unx.sh
+          ./tools/install-unx.sh
+          echo "$HOME/bin" >> $GITHUB_PATH
+          ls -lisah "$HOME/bin"
+
+      - name: Build TinyTeX-1
+        run: |
+          Rscript "tools/clean-tlpdb.R"
+          tar Jcf TinyTeX-1-linuxmusl-x86_64.tar.xz -C ~ .TinyTeX
+
+      - name: Build TinyTeX
+        run: |
+          Rscript "tools/test-basic.R"
+          tar Jcf TinyTeX-linuxmusl-x86_64.tar.xz -C ~ .TinyTeX
+
+      - name: Build TinyTeX-2
+        id: build-tinytex-2
+        env:
+          TEXLIVE_YEAR: ${{ needs.validate-ctan.outputs.texlive-year }}
+        run: sh tools/build-tinytex-2.sh
+
+      - name: Package TinyTeX-2
+        if: steps.build-tinytex-2.outputs.tinytex2-changed != 'false'
+        run: tar Jcf TinyTeX-2-linuxmusl-x86_64.tar.xz -C ~ .TinyTeX
+
+      - run: ls -lisah
+
+      - name: Upload bundles
+        uses: ./.github/actions/upload-bundles
+        with:
+          draft-tag: ${{ needs.new-release.outputs.draft-tag }}
+
+  build-mac:
+    needs: [validate-ctan, new-release]
+    runs-on: macos-latest
+    name: Build Bundles For macOS
+
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Clone repo
+        uses: actions/checkout@HEAD
+
+      - name: Setup R for build
+        uses: ./.github/actions/setup-r-for-build
+
+      - name: Build TinyTeX-0
+        run: |
+          sed -i '' 's|# finished base|Rscript tools/clean-tlpdb.R; tar Jcf TinyTeX-0-darwin.tar.xz -C ~/Library TinyTeX|' tools/install-unx.sh
+          ./tools/install-unx.sh
+
+      - name: Build TinyTeX-1
+        run: |
+          Rscript "tools/clean-tlpdb.R"
+          tar Jcf TinyTeX-1-darwin.tar.xz -C ~/Library TinyTeX
+
+      - name: Build TinyTeX
+        run: |
+          Rscript "tools/test-basic.R"
+          tar Jcf TinyTeX-darwin.tar.xz -C ~/Library TinyTeX
+          tar zcf TinyTeX.tgz -C ~/Library TinyTeX
+
+      - name: Build TinyTeX-2
+        id: build-tinytex-2
+        env:
+          TEXLIVE_YEAR: ${{ needs.validate-ctan.outputs.texlive-year }}
+        run: sh tools/build-tinytex-2.sh
+
+      - name: Package TinyTeX-2
+        if: steps.build-tinytex-2.outputs.tinytex2-changed != 'false'
+        run: tar Jcf TinyTeX-2-darwin.tar.xz -C ~/Library TinyTeX
+
+      - run: ls -lisah
+
+      - name: Upload bundles
+        uses: ./.github/actions/upload-bundles
+        with:
+          draft-tag: ${{ needs.new-release.outputs.draft-tag }}
+
+  deploy:
+    needs: [validate-ctan, new-release, build-windows, build-linux, build-linux-arm64, build-linux-musl, build-mac]
+    runs-on: ubuntu-latest
+    name: Publish new daily release
+
+    steps:
+      - name: Create release note
+        run: |
+          echo "This release contains the daily build of TinyTeX ($(date +'%A %B %d %Y %r %Z'))." > notes.md
+          echo "Please see https://github.com/rstudio/tinytex-releases for more info." >> notes.md
+          echo "" >> notes.md
+          echo "## TeX Live version" >> notes.md
+          echo "" >> notes.md
+          echo '```' >> notes.md
+          cat <<EOF >> notes.md
+          ${{ needs.build-linux.outputs.tlmgr-version }}
+          EOF
+          echo '```' >> notes.md
+          echo "" >> notes.md
+          if [ "${{ needs.validate-ctan.outputs.texlive-year }}" != "unknown" ]; then
+            echo "Built from CTAN repository: \`$CTAN_REPO\` (TeX Live ${{ needs.validate-ctan.outputs.texlive-year }})" >> notes.md
+          else
+            echo "Built from CTAN repository: \`$CTAN_REPO\`" >> notes.md
+          fi
+
+      - name: Publish new release
+        run: |
+          echo "::group::Move tag to last commit on master"
+          sha=$(gh api repos/{owner}/{repo}/git/ref/heads/master --jq '.object.sha')
+          gh api repos/{owner}/{repo}/git/refs/tags/daily -f sha=$sha --template 'Tag {{.ref | color "blue"}} moved on commit sha {{.object.sha | color "blue"}}.'
+          echo -e "\n::endgroup::"
+          echo "::group::undraft new and delete current release"
+          old=$(gh release edit ${{needs.new-release.outputs.tag}} --draft=true | grep -o tag/[^/]*$ | cut -c 5-)
+          gh release edit ${{needs.new-release.outputs.draft-tag}} --draft=false --notes-file notes.md
+          gh release delete ${old} -y
+          echo -e "\n::endgroup::"
+
+  cleaning:
+    needs: [new-release, deploy]
+    if: ${{ failure() || cancelled() }}
+    runs-on: ubuntu-latest
+    name: Cleaning step in case of error
+    steps:
+      - name: Remove unused daily release
+        run: |
+          gh release delete ${{needs.new-release.outputs.draft-tag}} -y

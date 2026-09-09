@@ -1,4 +1,12 @@
 ^.*\.Rproj$
 ^\.Rproj\.user$
 ^tools$
-^\.travis\.yml$
+^TUGboat$
+^codecov\.yml$
+^TinyTeX.*\.zip$
+^\.github$
+^cran-comments\.md$
+^\.vscode$
+^NEWS\.md$
+^\.positai$
+^\.claude$

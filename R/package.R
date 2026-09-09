@@ -1,6 +1,8 @@
 #' @import stats utils tools
-NULL
+#' @importFrom xfun grep_sub dir_exists download_file in_dir
+#' @keywords internal
+'_PACKAGE'
 
 os = .Platform$OS.type
 
-is_linux = function() Sys.info()[['sysname']] == 'Linux'
+.global = new.env(parent = emptyenv())

@@ -1,38 +1,70 @@
 #!/bin/sh
 
-rm -f install-tl-unx.tar.gz texlive.profile
-echo "Downloading install-tl-unx.tar.gz to ${PWD} ..."
-TLURL="http://mirror.ctan.org/systems/texlive/tlnet/install-tl-unx.tar.gz"
-PRURL="https://github.com/yihui/tinytex/raw/master/tools/texlive.profile"
+set -e
+
+TLREPO=${CTAN_REPO:-https://tlnet.yihui.org}
+TLINST="install-tl-unx.tar.gz"
+TLURL=$TLREPO/$TLINST
+PRNAME="tinytex.profile"
+PRURL="https://tinytex.yihui.org"
+
+# download a URL and save to its basename; pick curl or wget by availability
+download_file() {
+  if command -v curl > /dev/null 2>&1; then
+    curl -L -f --retry 10 --retry-delay 30 -O "$1"
+  else
+    wget --tries=11 --waitretry=30 "$1"
+  fi
+}
+
 if [ $(uname) = 'Darwin' ]; then
-  curl -LO $TLURL
-  curl -LO $PRURL
+  alias sedi="sed -i ''"
 else
-  wget $TLURL
-  wget $PRURL
+  alias sedi="sed -i"
+fi
+
+[ -e "$TLINST" ] || download_file "$TLURL"
+[ -e "$PRNAME" ] || download_file "$PRURL/$PRNAME"
+
+if [ $(uname) != 'Darwin' ]; then
   # ask `tlmgr path add` to add binaries to ~/bin instead of the default
   # /usr/local/bin unless this script is invoked with the argument '--admin'
-  # (e.g., users want to make LaTeX binaries available system-wide)
-  if [ "$1" != '--admin' ]; then
+  # (e.g., users want to make LaTeX binaries available system-wide), in which
+  # case we personalize texmf variables
+  if [ "$1" = '--admin' ]; then
+    echo 'TEXMFCONFIG $HOME/.TinyTeX/texmf-config' >> $PRNAME
+    echo 'TEXMFVAR $HOME/.TinyTeX/texmf-var' >> $PRNAME
+  else
     mkdir -p $HOME/bin
-    echo "tlpdbopt_sys_bin ${HOME}/bin" >> texlive.profile
+    echo "tlpdbopt_sys_bin $HOME/bin" >> $PRNAME
   fi
 fi
-tar -xzf install-tl-unx.tar.gz
-rm install-tl-unx.tar.gz
+
+# no need to personalize texmf variables if not installed by admin
+if [ "$1" != '--admin' ]; then
+  echo 'TEXMFCONFIG $TEXMFSYSCONFIG' >> $PRNAME
+  echo 'TEXMFVAR $TEXMFSYSVAR' >> $PRNAME
+fi
+
+tar -xzf $TLINST
 
 mkdir texlive
 cd texlive
-TEXLIVE_INSTALL_ENV_NOCHECK=true TEXLIVE_INSTALL_NO_WELCOME=true ../install-tl-*/install-tl -profile=../texlive.profile
-rm -r ../install-tl-* ../texlive.profile install-tl.log
+TEXLIVE_INSTALL_ENV_NOCHECK=true TEXLIVE_INSTALL_NO_WELCOME=true ../install-tl-*/install-tl -no-gui -profile=../$PRNAME -repository $TLREPO
+rm -r ../install-tl-*/ ../$PRNAME install-tl.log
+rm -f install-tl
 
-cd bin/*
+alias tlmgr='./bin/*/tlmgr'
+rm -f bin/man bin/*/man
+
+tlmgr option repository "$TLREPO"
+tlmgr conf texmf max_print_line 10000
+
 if [ "$3" != '' ]; then
-  ./tlmgr option repository "$3"
+  tlmgr option repository "$3"
   if [ "$4" != '' ]; then
-    ./tlmgr --repository http://www.preining.info/tlgpg/ install tlgpg
+    tlmgr --repository https://texlive.info/tlgpg/ install tlgpg
   fi
   # test if the repository is accessible; if not, set the default CTAN repo
-  ./tlmgr update --list || ./tlmgr option repository ctan
+  tlmgr update --list || ./tlmgr option repository ctan
 fi
-./tlmgr install latex-bin luatex xetex

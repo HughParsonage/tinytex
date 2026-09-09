@@ -1,0 +1,22 @@
+name: Setup R for TinyTeX build
+description: Common setup steps shared across TinyTeX build jobs
+
+runs:
+  using: composite
+  steps:
+    - name: Clean up any existing TinyTeX bundles
+      run: rm -f TinyTeX-*.* TinyTeX.*
+      shell: bash
+
+    - name: Install Pandoc
+      uses: r-lib/actions/setup-pandoc@HEAD
+
+    - name: Install R
+      uses: r-lib/actions/setup-r@HEAD
+      with:
+        use-public-rspm: true
+
+    - name: Install tinytex package and its deps
+      uses: yihui/actions/setup-r-dependencies@HEAD
+      with:
+        extra-packages: rmarkdown kableExtra bookdown .

@@ -1,0 +1,48 @@
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '.github/workflows/build.yaml'
+
+name: check required LateX packages
+
+jobs:
+  LateX-Packages:
+    runs-on: ubuntu-latest
+
+    name: Ubuntu (release)
+
+    env:
+      R_REMOTES_NO_ERRORS_FROM_WARNINGS: true
+
+    steps:
+      - uses: actions/checkout@HEAD
+
+      - uses: r-lib/actions/setup-r@HEAD
+        with:
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-pandoc@HEAD
+
+      - uses: r-lib/actions/setup-tinytex@HEAD
+        env:
+          # install prebuilt base version (infraonly)
+          TINYTEX_INSTALLER: TinyTeX-0
+
+      - uses: yihui/actions/setup-r-dependencies@HEAD
+        with:
+          extra-packages: . curl kableExtra bookdown
+
+      - name: Find required LaTeX packages
+        run: Rscript tools/test-packages.R
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@HEAD
+        with:
+          title: Update the list of LaTeX packages
+          body: New results by running `tools/test-packages.R`.
+          commit-message: Update the list of LaTeX packages
+          add-paths: |
+            R/platforms.R
+            tools/pkgs-custom.txt
+            tools/pkgs-yihui.txt

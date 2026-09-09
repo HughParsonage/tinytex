@@ -4,8 +4,12 @@
 \alias{parse_packages}
 \title{Find missing LaTeX packages from a LaTeX log file}
 \usage{
-parse_packages(log, text = readLines(log), files = detect_files(text), 
-    quiet = rep(FALSE, 3))
+parse_packages(
+  log,
+  text = read_lines(log),
+  files = detect_files(text),
+  quiet = rep(FALSE, 3)
+)
 }
 \arguments{
 \item{log}{Path to the LaTeX log file (typically named \file{*.log}).}
@@ -30,6 +34,6 @@ A character vector of LaTeX package names.
 \description{
 Analyze the error messages in a LaTeX log file to figure out the names of
 missing LaTeX packages that caused the errors. These packages can be
-installed via \code{\link{tlmgr_install}()}. Searching for missing packages
-is based on \code{\link{tlmgr_search}()}.
+installed via \code{\link[=tlmgr_install]{tlmgr_install()}}. Searching for missing packages
+is based on \code{\link[=tlmgr_search]{tlmgr_search()}}.
 }
